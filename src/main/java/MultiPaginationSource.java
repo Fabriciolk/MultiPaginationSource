@@ -5,7 +5,6 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
 
     private final List<PaginationSource<T>> orderedPaginationSourceList;
     private final List<Long> orderedCountList = new ArrayList<>();
-
     private final List<Long> cumulativeOrderedCountList = new ArrayList<>();
     private Long totalCount = 0L;
     private boolean countDataAlreadyExtracted = false;
@@ -95,7 +94,7 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
 
         int countBeforeInterestData = countFirstPage + (relativePagination.getPage() - 2) * relativePagination.getPageSize();
 
-        if (relativePagination.getPageSize() > countBeforeInterestData) {
+        if (countBeforeInterestData < relativePagination.getPageSize()) {
             return Pagination.builder()
                     .page(1)
                     .pageSize(relativePagination.getPageSize() + countBeforeInterestData)
