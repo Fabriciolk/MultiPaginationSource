@@ -1,6 +1,6 @@
 import java.util.List;
 
-public interface SourcePagination<T>
+public interface PaginationSource<T>
 {
     List<T> getItemsList(int page, int pageSize) throws IncompatibleCountFromSourceException;
 
