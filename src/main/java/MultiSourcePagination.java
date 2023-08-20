@@ -1,5 +1,3 @@
-import lombok.Getter;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -7,7 +5,8 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
 
     private final List<SourcePagination<T>> orderedSourcePaginationList;
     private final List<Long> orderedCountList = new ArrayList<>();
-    @Getter
+
+    private final List<Long> cumulativeOrderedCountList = new ArrayList<>();
     private Long totalCount = 0L;
     private boolean countDataAlreadyExtracted = false;
 
@@ -23,7 +22,7 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
         int relativePage = page;
 
         for (int i = 0; i < orderedSourcePaginationList.size(); i++) {
-            if ((long) (page - 1) * pageSize < orderedCountList.get(i)) {
+            if ((long) (page - 1) * pageSize < cumulativeOrderedCountList.get(i)) {
                 Pagination relativePagination = Pagination.builder()
                         .page(relativePage)
                         .pageSize(pageSize)
@@ -91,9 +90,9 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
 
         if (relativePagination.getPageSize() > countBeforeInterestData) {
             return Pagination.builder()
-                .page(1)
-                .pageSize(relativePagination.getPageSize() + countBeforeInterestData)
-                .build();
+                    .page(1)
+                    .pageSize(relativePagination.getPageSize() + countBeforeInterestData)
+                    .build();
         }
 
         for (int newCandidatePageSize = relativePagination.getPageSize(); newCandidatePageSize < countBeforeInterestData; newCandidatePageSize++) {
@@ -111,7 +110,8 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
         for (int j = lastSourceIndex + 1; j < orderedSourcePaginationList.size(); j++) {
             if (itemList.size() < pageSize) {
                 List<T> contratosChamada2 = orderedSourcePaginationList.get(j).getItemsList(1, pageSize - itemList.size());
-                itemList.addAll(contratosChamada2.subList(0, Math.min(pageSize - itemList.size(), itemList.size())));
+                System.out.println(contratosChamada2);
+                itemList.addAll(contratosChamada2.subList(0, Math.min(pageSize - itemList.size(), contratosChamada2.size())));
             } else break;
         }
     }
@@ -122,6 +122,7 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
 
             totalCount += currentCount;
             orderedCountList.add(currentCount);
+            cumulativeOrderedCountList.add(totalCount);
         });
 
         countDataAlreadyExtracted = true;
