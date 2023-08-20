@@ -16,7 +16,7 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
 
     @Override
     public List<T> getItemsList(int page, int pageSize) throws IncompatibleCountFromSourceException {
-        if (!countDataAlreadyExtracted) extractCountDataFromSources();
+        extractCountDataFromSources();
         List<T> itemList = new ArrayList<>();
         int countToIgnore = 0;
         int relativePage = page;
@@ -28,13 +28,16 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
                         .pageSize(pageSize)
                         .build();
 
-                int countFirstRelativePage = pageSize - (countToIgnore % pageSize == 0 ? pageSize : countToIgnore % pageSize);
+                int countFirstRelativePage = pageSize - (countToIgnore % pageSize);
                 Pagination bestSizedAdaptedPagination = getBestSizeAdaptedPagination(relativePagination, countFirstRelativePage);
 
                 itemList = orderedSourcePaginationList.get(i).getItemsList(bestSizedAdaptedPagination.getPage(), bestSizedAdaptedPagination.getPageSize());
 
                 if (orderedSourcePaginationList.get(i).isPaginationEnabled()) {
-                    itemList = itemList.subList((countFirstRelativePage + (relativePage - 2) * pageSize) % bestSizedAdaptedPagination.getPageSize(), Math.min(countFirstRelativePage + pageSize, itemList.size()));
+                    itemList = itemList.subList(
+                            (countFirstRelativePage + (relativePage - 2) * pageSize) % bestSizedAdaptedPagination.getPageSize(),
+                            Math.min(countFirstRelativePage + pageSize, itemList.size())
+                    );
                 } else {
                     if (itemList.size() != orderedCountList.get(i)) {
                         String errorMsg = "Pagination from source '" + orderedSourcePaginationList.get(i).getName() + "' " +
@@ -43,10 +46,16 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
 
                         throw new IncompatibleCountFromSourceException(errorMsg);
                     }
-                    itemList = itemList.subList((page - 1) * pageSize, Math.min((page - 1) * pageSize + pageSize, itemList.size()));
+
+                    int indexToStart = relativePage == 1 ? 0 : countFirstRelativePage + ((relativePage - 2) * pageSize);
+
+                    itemList = itemList.subList(
+                            indexToStart,
+                            Math.min(indexToStart + pageSize, itemList.size())
+                    );
                 }
 
-                tryToAddRemainingPaginationData(itemList, i, pageSize);
+                tryToAddRemainingDataFromNextSources(itemList, i, pageSize);
 
                 break;
             } else {
@@ -60,9 +69,7 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
 
     @Override
     public Long getCount() {
-        if (countDataAlreadyExtracted) return totalCount;
-        else extractCountDataFromSources();
-
+        extractCountDataFromSources();
         return totalCount;
     }
 
@@ -106,17 +113,18 @@ public class MultiSourcePagination<T> implements SourcePagination<T> {
         return bestPagination;
     }
 
-    private void tryToAddRemainingPaginationData(List<T> itemList, int lastSourceIndex, int pageSize) throws IncompatibleCountFromSourceException {
+    private void tryToAddRemainingDataFromNextSources(List<T> itemList, int lastSourceIndex, int pageSize) throws IncompatibleCountFromSourceException {
         for (int j = lastSourceIndex + 1; j < orderedSourcePaginationList.size(); j++) {
             if (itemList.size() < pageSize) {
-                List<T> contratosChamada2 = orderedSourcePaginationList.get(j).getItemsList(1, pageSize - itemList.size());
-                System.out.println(contratosChamada2);
-                itemList.addAll(contratosChamada2.subList(0, Math.min(pageSize - itemList.size(), contratosChamada2.size())));
+                List<T> itemsFromNextSource = orderedSourcePaginationList.get(j).getItemsList(1, pageSize - itemList.size());
+                itemList.addAll(itemsFromNextSource.subList(0, Math.min(pageSize - itemList.size(), itemsFromNextSource.size())));
             } else break;
         }
     }
 
     private void extractCountDataFromSources() {
+        if (countDataAlreadyExtracted) return;
+
         orderedSourcePaginationList.forEach(src -> {
             Long currentCount = src.getCount();
 
