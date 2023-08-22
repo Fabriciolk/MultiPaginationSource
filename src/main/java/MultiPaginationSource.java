@@ -1,13 +1,20 @@
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 
 public class MultiPaginationSource<T> implements PaginationSource<T> {
 
-    private final List<PaginationSource<T>> orderedPaginationSourceList;
-    private final List<Long> orderedCountList = new ArrayList<>();
-    private final List<Long> cumulativeOrderedCountList = new ArrayList<>();
+    private List<PaginationSource<T>> orderedPaginationSourceList;
+    private List<Long> orderedCountList = new ArrayList<>();
+
+    private List<Long> cumulativeOrderedCountList = new ArrayList<>();
     private Long totalCount = 0L;
     private boolean countDataAlreadyExtracted = false;
+    private boolean sourcesAlreadySortedAndMerged = false;
+    private Map<Comparator<T>, SortConfigIndexes> sortConfig = null;
+
+    public MultiPaginationSource(List<PaginationSource<T>> orderedPaginationSourceList, Map<Comparator<T>, SortConfigIndexes> sortConfig) {
+        this.orderedPaginationSourceList = orderedPaginationSourceList;
+        this.sortConfig = sortConfig;
+    }
 
     public MultiPaginationSource(List<PaginationSource<T>> orderedPaginationSourceList) {
         this.orderedPaginationSourceList = orderedPaginationSourceList;
@@ -16,6 +23,11 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
     @Override
     public List<T> getItemsList(int page, int pageSize) throws IncompatibleCountFromSourceException {
         extractCountDataFromSources();
+
+        if (sortConfig != null && !sortConfig.isEmpty() && !sourcesAlreadySortedAndMerged) {
+            tryToSortAndMergePaginationSource(page, pageSize);
+        }
+
         List<T> itemList = new ArrayList<>();
         int countToIgnore = 0;
         int relativePage = page;
@@ -39,11 +51,7 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                     );
                 } else {
                     if (itemList.size() != orderedCountList.get(i)) {
-                        String errorMsg = "Pagination from source '" + orderedPaginationSourceList.get(i).getName() + "' " +
-                                "is not enabled and list's size returned (" + itemList.size() + ") " +
-                                "is not equals its count (" + orderedCountList.get(i) + ").";
-
-                        throw new IncompatibleCountFromSourceException(errorMsg);
+                        throw new IncompatibleCountFromSourceException(orderedPaginationSourceList.get(i).getName(), (long) itemList.size(), orderedCountList.get(i));
                     }
 
                     int indexToStart = relativePage == 1 ? 0 : countFirstRelativePage + ((relativePage - 2) * pageSize);
@@ -64,6 +72,99 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         }
 
         return itemList;
+    }
+
+    private void tryToSortAndMergePaginationSource(int page, int pageSize) throws IncompatibleCountFromSourceException {
+        int countStartToExtract = (page - 1) * pageSize;
+        int countFinalToExtract = (int) Math.min((long) page * pageSize - 1, totalCount);
+
+        int firstSourceIndexNeeded = 0;
+        int lastSourceIndexNeeded = 0;
+
+        for (int i = 0; i < cumulativeOrderedCountList.size(); i++) {
+            int startCountOnSource = i == 0 ? 0 : (int) cumulativeOrderedCountList.get(i).longValue();
+            int finalCountOnSource = (int) cumulativeOrderedCountList.get(i).longValue() - 1;
+
+            if (startCountOnSource <= countStartToExtract && countStartToExtract <= finalCountOnSource) {
+                firstSourceIndexNeeded = i;
+
+                for (int j = i; j < cumulativeOrderedCountList.size(); j++) {
+                    startCountOnSource = j == 0 ? 0 : (int) cumulativeOrderedCountList.get(j).longValue();
+                    finalCountOnSource = (int) cumulativeOrderedCountList.get(j).longValue() - 1;
+
+                    if (startCountOnSource <= countFinalToExtract && countFinalToExtract <= finalCountOnSource) {
+                        lastSourceIndexNeeded = j;
+                        break;
+                    }
+                }
+
+                break;
+            }
+        }
+
+        List<PaginationSource<T>> newOrderedPaginationSourceList = new ArrayList<>();
+        Set<Integer> indexesToIgnore = new HashSet<>();
+
+        for (int i = 0; i < orderedPaginationSourceList.size(); i++) {
+            for (Map.Entry<Comparator<T>, SortConfigIndexes> entry : sortConfig.entrySet()) {
+                if ((entry.getValue().getStartIndex() <= i && i <= entry.getValue().getFinalIndex()) &&
+                        ((firstSourceIndexNeeded <= entry.getValue().getFinalIndex() && entry.getValue().getFinalIndex() <= lastSourceIndexNeeded) ||
+                                (firstSourceIndexNeeded <= entry.getValue().getStartIndex() && entry.getValue().getStartIndex() <= lastSourceIndexNeeded)))
+                {
+                    PaginationSource<T> mergedSource = mergeSource(entry.getValue(), entry.getKey());
+                    newOrderedPaginationSourceList.add(mergedSource);
+                    for (int j = entry.getValue().getStartIndex(); j <= entry.getValue().getFinalIndex(); j++) indexesToIgnore.add(j);
+                    sortConfig.remove(entry.getKey());
+                    break;
+                } else if (!indexesToIgnore.contains(i)) {
+                    newOrderedPaginationSourceList.add(orderedPaginationSourceList.get(i));
+                }
+            }
+        }
+
+        resetCountData();
+        orderedPaginationSourceList = newOrderedPaginationSourceList;
+        extractCountDataFromSources();
+        sourcesAlreadySortedAndMerged = true;
+    }
+
+    private PaginationSource<T> mergeSource(SortConfigIndexes indexes, Comparator<T> sorter) throws IncompatibleCountFromSourceException {
+        StringBuilder newName = new StringBuilder("sorted[");
+        List<T> mergedItemList = new ArrayList<>();
+
+        for (int i = indexes.getStartIndex(); i <= indexes.getFinalIndex(); i++) {
+            mergedItemList.addAll(orderedPaginationSourceList.get(i).getItemsList(
+                    1,
+                    (int) orderedPaginationSourceList.get(i).getCount().longValue()
+            ));
+            newName.append(orderedPaginationSourceList.get(i).getName());
+
+            if (i + 1 <= indexes.getFinalIndex()) newName.append(" + ");
+        }
+
+        mergedItemList.sort(sorter);
+
+        return new PaginationSource<T>() {
+            @Override
+            public List<T> getItemsList(int page, int pageSize) {
+                return mergedItemList;
+            }
+
+            @Override
+            public Long getCount() {
+                return (long) mergedItemList.size();
+            }
+
+            @Override
+            public String getName() {
+                return newName.toString();
+            }
+
+            @Override
+            public boolean isPaginationEnabled() {
+                return false;
+            }
+        };
     }
 
     @Override
@@ -133,5 +234,12 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         });
 
         countDataAlreadyExtracted = true;
+    }
+
+    private void resetCountData() {
+        totalCount = 0L;
+        orderedCountList.clear();
+        cumulativeOrderedCountList.clear();
+        countDataAlreadyExtracted = false;
     }
 }
