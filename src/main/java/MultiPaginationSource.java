@@ -3,17 +3,18 @@ import java.util.*;
 public class MultiPaginationSource<T> implements PaginationSource<T> {
 
     private List<PaginationSource<T>> orderedPaginationSourceList;
-    private List<Long> orderedCountList = new ArrayList<>();
-
-    private List<Long> cumulativeOrderedCountList = new ArrayList<>();
+    private final List<Long> orderedCountList = new ArrayList<>();
+    private final List<Long> cumulativeOrderedCountList = new ArrayList<>();
     private Long totalCount = 0L;
     private boolean countDataAlreadyExtracted = false;
     private boolean sourcesAlreadySortedAndMerged = false;
     private Map<Comparator<T>, SortConfigIndexes> sortConfig = null;
 
-    public MultiPaginationSource(List<PaginationSource<T>> orderedPaginationSourceList, Map<Comparator<T>, SortConfigIndexes> sortConfig) {
+    public MultiPaginationSource(List<PaginationSource<T>> orderedPaginationSourceList, Map<Comparator<T>, SortConfigIndexes> sortConfig) throws OverlapBetweenSortsException {
         this.orderedPaginationSourceList = orderedPaginationSourceList;
         this.sortConfig = sortConfig;
+
+        validateSortConfigIndexes(sortConfig);
     }
 
     public MultiPaginationSource(List<PaginationSource<T>> orderedPaginationSourceList) {
@@ -44,23 +45,7 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
 
                 itemList = orderedPaginationSourceList.get(i).getItemsList(bestSizedAdaptedPagination.getPage(), bestSizedAdaptedPagination.getPageSize());
 
-                if (orderedPaginationSourceList.get(i).isPaginationEnabled()) {
-                    itemList = itemList.subList(
-                            (countFirstRelativePage + (relativePage - 2) * pageSize) % bestSizedAdaptedPagination.getPageSize(),
-                            Math.min(countFirstRelativePage + pageSize, itemList.size())
-                    );
-                } else {
-                    if (itemList.size() != orderedCountList.get(i)) {
-                        throw new IncompatibleCountFromSourceException(orderedPaginationSourceList.get(i).getName(), (long) itemList.size(), orderedCountList.get(i));
-                    }
-
-                    int indexToStart = relativePage == 1 ? 0 : countFirstRelativePage + ((relativePage - 2) * pageSize);
-
-                    itemList = itemList.subList(
-                            indexToStart,
-                            Math.min(indexToStart + pageSize, itemList.size())
-                    );
-                }
+                itemList = filterOnlyInterestedData(pageSize, i, itemList, countFirstRelativePage, relativePage, bestSizedAdaptedPagination);
 
                 tryToAddRemainingDataFromNextSources(itemList, i, pageSize);
 
@@ -69,6 +54,46 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                 countToIgnore += orderedCountList.get(i);
                 relativePage = page - (countToIgnore / pageSize);
             }
+        }
+
+        return itemList;
+    }
+
+    @Override
+    public Long getCount() {
+        extractCountDataFromSources();
+        return totalCount;
+    }
+
+    @Override
+    public String getName() {
+        StringBuilder stringBuilder = new StringBuilder("[" + orderedPaginationSourceList.get(0).getName());
+
+        for (int i = 1; i < orderedPaginationSourceList.size(); i++)
+            stringBuilder.append(" + ").append(orderedPaginationSourceList.get(i).getName());
+
+        stringBuilder.append("]");
+
+        return stringBuilder.toString();
+    }
+
+    private List<T> filterOnlyInterestedData(int pageSize, int sourceIndex, List<T> itemList, int countFirstRelativePage, int relativePage, Pagination bestSizedAdaptedPagination) throws IncompatibleCountFromSourceException {
+        if (orderedPaginationSourceList.get(sourceIndex).isPaginationEnabled()) {
+            itemList = itemList.subList(
+                    (countFirstRelativePage + (relativePage - 2) * pageSize) % bestSizedAdaptedPagination.getPageSize(),
+                    Math.min(countFirstRelativePage + pageSize, itemList.size())
+            );
+        } else {
+            if (itemList.size() != orderedCountList.get(sourceIndex)) {
+                throw new IncompatibleCountFromSourceException(orderedPaginationSourceList.get(sourceIndex).getName(), (long) itemList.size(), orderedCountList.get(sourceIndex));
+            }
+
+            int indexToStart = relativePage == 1 ? 0 : countFirstRelativePage + ((relativePage - 2) * pageSize);
+
+            itemList = itemList.subList(
+                    indexToStart,
+                    Math.min(indexToStart + pageSize, itemList.size())
+            );
         }
 
         return itemList;
@@ -88,8 +113,6 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
             if (startCountOnSource <= countStartToExtract && countStartToExtract <= finalCountOnSource) {
                 firstSourceIndexNeeded = i;
 
-                // 14       / 16        / 25     / 29
-                // 0 a 13   / 14 a 15   / 16 a 13/ 14 a ...
                 for (int j = i; j < cumulativeOrderedCountList.size(); j++) {
                     startCountOnSource = j == 0 ? 0 : (int) cumulativeOrderedCountList.get(j - 1).longValue();
                     finalCountOnSource = (int) cumulativeOrderedCountList.get(j).longValue() - 1;
@@ -103,8 +126,6 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                 break;
             }
         }
-        System.out.println(firstSourceIndexNeeded);
-        System.out.println(lastSourceIndexNeeded);
 
         List<PaginationSource<T>> newOrderedPaginationSourceList = new ArrayList<>();
         Set<Integer> indexesToIgnore = new HashSet<>();
@@ -181,24 +202,6 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         };
     }
 
-    @Override
-    public Long getCount() {
-        extractCountDataFromSources();
-        return totalCount;
-    }
-
-    @Override
-    public String getName() {
-        StringBuilder stringBuilder = new StringBuilder("[" + orderedPaginationSourceList.get(0).getName());
-
-        for (int i = 1; i < orderedPaginationSourceList.size(); i++)
-            stringBuilder.append(" + ").append(orderedPaginationSourceList.get(i).getName());
-
-        stringBuilder.append("]");
-
-        return stringBuilder.toString();
-    }
-
     private Pagination getBestSizeAdaptedPagination(Pagination relativePagination, int countFirstPage) {
         Pagination bestPagination = Pagination.builder()
                 .page(relativePagination.getPage())
@@ -255,5 +258,20 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         orderedCountList.clear();
         cumulativeOrderedCountList.clear();
         countDataAlreadyExtracted = false;
+    }
+
+    private void validateSortConfigIndexes(Map<Comparator<T>, SortConfigIndexes> sortConfig) throws OverlapBetweenSortsException {
+        for (Map.Entry<Comparator<T>, SortConfigIndexes> entry : sortConfig.entrySet()) {
+            if (entry.getValue().getFinalIndex() >= orderedPaginationSourceList.size()) throw new IndexOutOfBoundsException("Some index is out of sources bounds");
+
+            for (Map.Entry<Comparator<T>, SortConfigIndexes> entry2 : sortConfig.entrySet()) {
+                if (entry.getValue().equals(entry2.getValue())) continue;
+
+                if ((entry2.getValue().getStartIndex() <= entry.getValue().getFinalIndex() && entry.getValue().getFinalIndex() <= entry2.getValue().getFinalIndex()) ||
+                        (entry2.getValue().getStartIndex() <= entry.getValue().getStartIndex() && entry.getValue().getStartIndex() <= entry2.getValue().getFinalIndex())) {
+                    throw new OverlapBetweenSortsException();
+                }
+            }
+        }
     }
 }
