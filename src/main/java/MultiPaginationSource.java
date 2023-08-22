@@ -82,14 +82,16 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         int lastSourceIndexNeeded = 0;
 
         for (int i = 0; i < cumulativeOrderedCountList.size(); i++) {
-            int startCountOnSource = i == 0 ? 0 : (int) cumulativeOrderedCountList.get(i).longValue();
+            int startCountOnSource = i == 0 ? 0 : (int) cumulativeOrderedCountList.get(i - 1).longValue();
             int finalCountOnSource = (int) cumulativeOrderedCountList.get(i).longValue() - 1;
 
             if (startCountOnSource <= countStartToExtract && countStartToExtract <= finalCountOnSource) {
                 firstSourceIndexNeeded = i;
 
+                // 14       / 16        / 25     / 29
+                // 0 a 13   / 14 a 15   / 16 a 13/ 14 a ...
                 for (int j = i; j < cumulativeOrderedCountList.size(); j++) {
-                    startCountOnSource = j == 0 ? 0 : (int) cumulativeOrderedCountList.get(j).longValue();
+                    startCountOnSource = j == 0 ? 0 : (int) cumulativeOrderedCountList.get(j - 1).longValue();
                     finalCountOnSource = (int) cumulativeOrderedCountList.get(j).longValue() - 1;
 
                     if (startCountOnSource <= countFinalToExtract && countFinalToExtract <= finalCountOnSource) {
@@ -101,11 +103,15 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                 break;
             }
         }
+        System.out.println(firstSourceIndexNeeded);
+        System.out.println(lastSourceIndexNeeded);
 
         List<PaginationSource<T>> newOrderedPaginationSourceList = new ArrayList<>();
         Set<Integer> indexesToIgnore = new HashSet<>();
 
         for (int i = 0; i < orderedPaginationSourceList.size(); i++) {
+            boolean isTreated = false;
+
             for (Map.Entry<Comparator<T>, SortConfigIndexes> entry : sortConfig.entrySet()) {
                 if ((entry.getValue().getStartIndex() <= i && i <= entry.getValue().getFinalIndex()) &&
                         ((firstSourceIndexNeeded <= entry.getValue().getFinalIndex() && entry.getValue().getFinalIndex() <= lastSourceIndexNeeded) ||
@@ -118,7 +124,14 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                     break;
                 } else if (!indexesToIgnore.contains(i)) {
                     newOrderedPaginationSourceList.add(orderedPaginationSourceList.get(i));
+                    indexesToIgnore.add(i);
                 }
+                isTreated = true;
+            }
+
+            if (!isTreated && !indexesToIgnore.contains(i)) {
+                newOrderedPaginationSourceList.add(orderedPaginationSourceList.get(i));
+                indexesToIgnore.add(i);
             }
         }
 
@@ -140,6 +153,7 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
             newName.append(orderedPaginationSourceList.get(i).getName());
 
             if (i + 1 <= indexes.getFinalIndex()) newName.append(" + ");
+            else newName.append("]");
         }
 
         mergedItemList.sort(sorter);
