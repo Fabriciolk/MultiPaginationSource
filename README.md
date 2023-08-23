@@ -11,5 +11,6 @@ Furthermore, the feature supports sort combinations too. Using our example, if f
 
 We can visualize the merge-sort on image below
 
-![MultiSourcePagination-Sort](https://github.com/Fabriciolk/MultiPaginationSource/assets/72703544/06af1180-7e51-4194-bab0-4819890511bb)
+![MultiSourcePagination-Sort](https://github.com/Fabriciolk/MultiPaginationSource/assets/72703544/dd3885bc-8b52-4086-8c1e-5fe8eaa54cab)
+
 
