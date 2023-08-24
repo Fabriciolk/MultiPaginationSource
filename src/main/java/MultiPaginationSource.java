@@ -1,3 +1,4 @@
+
 import java.util.*;
 
 public class MultiPaginationSource<T> implements PaginationSource<T> {
@@ -22,7 +23,8 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
     }
 
     @Override
-    public List<T> getItemsList(int page, int pageSize) throws IncompatibleCountFromSourceException {
+    public List<T> getItemsList(int page, int pageSize) throws TooMuchDataOnPageException {
+        if (pageSize == 0) return new ArrayList<>();
         extractCountDataFromSources();
 
         if (sortConfig != null && !sortConfig.isEmpty() && !sourcesAlreadySortedAndMerged) {
@@ -45,7 +47,11 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
 
                 itemList = orderedPaginationSourceList.get(i).getItemsList(bestSizedAdaptedPagination.getPage(), bestSizedAdaptedPagination.getPageSize());
 
-                itemList = filterOnlyInterestedData(pageSize, i, itemList, countFirstRelativePage, relativePage, bestSizedAdaptedPagination);
+                if (itemList.size() > bestSizedAdaptedPagination.getPageSize()) {
+                    throw new TooMuchDataOnPageException(itemList.size(), bestSizedAdaptedPagination.getPageSize(), bestSizedAdaptedPagination.getPage(), orderedPaginationSourceList.get(i).getName());
+                }
+
+                itemList = filterOnlyInterestedData(pageSize, itemList, countFirstRelativePage, relativePage, bestSizedAdaptedPagination);
 
                 tryToAddRemainingDataFromNextSources(itemList, i, pageSize);
 
@@ -77,29 +83,14 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         return stringBuilder.toString();
     }
 
-    private List<T> filterOnlyInterestedData(int pageSize, int sourceIndex, List<T> itemList, int countFirstRelativePage, int relativePage, Pagination bestSizedAdaptedPagination) throws IncompatibleCountFromSourceException {
-        if (orderedPaginationSourceList.get(sourceIndex).isPaginationEnabled()) {
-            itemList = itemList.subList(
-                    (countFirstRelativePage + (relativePage - 2) * pageSize) % bestSizedAdaptedPagination.getPageSize(),
-                    Math.min(countFirstRelativePage + pageSize, itemList.size())
-            );
-        } else {
-            if (itemList.size() != orderedCountList.get(sourceIndex)) {
-                throw new IncompatibleCountFromSourceException(orderedPaginationSourceList.get(sourceIndex).getName(), (long) itemList.size(), orderedCountList.get(sourceIndex));
-            }
-
-            int indexToStart = relativePage == 1 ? 0 : countFirstRelativePage + ((relativePage - 2) * pageSize);
-
-            itemList = itemList.subList(
-                    indexToStart,
-                    Math.min(indexToStart + pageSize, itemList.size())
-            );
-        }
-
-        return itemList;
+    private List<T> filterOnlyInterestedData(int pageSize, List<T> itemList, int countFirstRelativePage, int relativePage, Pagination bestSizedAdaptedPagination) {
+        return itemList.subList(
+                (countFirstRelativePage + (relativePage - 2) * pageSize) % bestSizedAdaptedPagination.getPageSize(),
+                Math.min(countFirstRelativePage + pageSize, itemList.size())
+        );
     }
 
-    private void tryToSortAndMergePaginationSource(int page, int pageSize) throws IncompatibleCountFromSourceException {
+    private void tryToSortAndMergePaginationSource(int page, int pageSize) throws TooMuchDataOnPageException {
         int countStartToExtract = (page - 1) * pageSize;
         int countFinalToExtract = (int) Math.min((long) page * pageSize - 1, totalCount);
 
@@ -138,7 +129,7 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                         ((firstSourceIndexNeeded <= entry.getValue().getFinalIndex() && entry.getValue().getFinalIndex() <= lastSourceIndexNeeded) ||
                                 (firstSourceIndexNeeded <= entry.getValue().getStartIndex() && entry.getValue().getStartIndex() <= lastSourceIndexNeeded)))
                 {
-                    PaginationSource<T> mergedSource = mergeSource(entry.getValue(), entry.getKey());
+                    PaginationSource<T> mergedSource = mergeSources(entry.getValue(), entry.getKey());
                     newOrderedPaginationSourceList.add(mergedSource);
                     for (int j = entry.getValue().getStartIndex(); j <= entry.getValue().getFinalIndex(); j++) indexesToIgnore.add(j);
                     sortConfig.remove(entry.getKey());
@@ -162,7 +153,7 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         sourcesAlreadySortedAndMerged = true;
     }
 
-    private PaginationSource<T> mergeSource(SortConfigIndexes indexes, Comparator<T> sorter) throws IncompatibleCountFromSourceException {
+    private PaginationSource<T> mergeSources(SortConfigIndexes indexes, Comparator<T> sorter) throws TooMuchDataOnPageException {
         StringBuilder newName = new StringBuilder("sorted[");
         List<T> mergedItemList = new ArrayList<>();
 
@@ -193,11 +184,6 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
             @Override
             public String getName() {
                 return newName.toString();
-            }
-
-            @Override
-            public boolean isPaginationEnabled() {
-                return false;
             }
         };
     }
@@ -230,10 +216,13 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         return bestPagination;
     }
 
-    private void tryToAddRemainingDataFromNextSources(List<T> itemList, int lastSourceIndex, int pageSize) throws IncompatibleCountFromSourceException {
+    private void tryToAddRemainingDataFromNextSources(List<T> itemList, int lastSourceIndex, int pageSize) throws TooMuchDataOnPageException {
         for (int j = lastSourceIndex + 1; j < orderedPaginationSourceList.size(); j++) {
             if (itemList.size() < pageSize) {
                 List<T> itemsFromNextSource = orderedPaginationSourceList.get(j).getItemsList(1, pageSize - itemList.size());
+                if (itemsFromNextSource.size() > pageSize) {
+                    throw new TooMuchDataOnPageException(itemsFromNextSource.size(), pageSize, 1, orderedPaginationSourceList.get(j).getName());
+                }
                 itemList.addAll(itemsFromNextSource.subList(0, Math.min(pageSize - itemList.size(), itemsFromNextSource.size())));
             } else break;
         }
