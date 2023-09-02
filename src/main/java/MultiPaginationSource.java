@@ -1,4 +1,3 @@
-
 import java.util.*;
 
 public class MultiPaginationSource<T> implements PaginationSource<T> {
@@ -22,27 +21,37 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         this.orderedPaginationSourceList = orderedPaginationSourceList;
     }
 
+    /**
+     *
+     *  This method returns interested data accessing sources only
+     *  if is needed, based on total count from each one.
+     *
+     * **/
+
     @Override
-    public List<T> getItemsList(int page, int pageSize) throws TooMuchDataOnPageException {
-        if (pageSize == 0) return new ArrayList<>();
+    public List<T> getItemsList(int innerPage, int innerPageSize) throws TooMuchDataOnPageException {
+        if (innerPageSize < 0) throw new IndexOutOfBoundsException("innerPageSize = " + innerPageSize);
+        if (innerPage <= 0) throw new IndexOutOfBoundsException("innerPage = " + innerPage);
+        if (innerPageSize == 0) return new ArrayList<>();
+
         extractCountDataFromSources();
 
         if (sortConfig != null && !sortConfig.isEmpty() && !sourcesAlreadySortedAndMerged) {
-            tryToSortAndMergePaginationSource(page, pageSize);
+            tryToSortAndMergePaginationSource(innerPage, innerPageSize);
         }
 
         List<T> itemList = new ArrayList<>();
         int countToIgnore = 0;
-        int relativePage = page;
+        int relativePage = innerPage;
 
         for (int i = 0; i < orderedPaginationSourceList.size(); i++) {
-            if ((long) (page - 1) * pageSize < cumulativeOrderedCountList.get(i)) {
+            if ((long) (innerPage - 1) * innerPageSize < cumulativeOrderedCountList.get(i)) {
                 Pagination relativePagination = Pagination.builder()
                         .page(relativePage)
-                        .pageSize(pageSize)
+                        .pageSize(innerPageSize)
                         .build();
 
-                int countFirstRelativePage = pageSize - (countToIgnore % pageSize);
+                int countFirstRelativePage = innerPageSize - (countToIgnore % innerPageSize);
                 Pagination bestSizedAdaptedPagination = getBestSizeAdaptedPagination(relativePagination, countFirstRelativePage);
 
                 itemList = orderedPaginationSourceList.get(i).getItemsList(bestSizedAdaptedPagination.getPage(), bestSizedAdaptedPagination.getPageSize());
@@ -51,14 +60,14 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                     throw new TooMuchDataOnPageException(itemList.size(), bestSizedAdaptedPagination.getPageSize(), bestSizedAdaptedPagination.getPage(), orderedPaginationSourceList.get(i).getName());
                 }
 
-                itemList = filterOnlyInterestedData(pageSize, itemList, countFirstRelativePage, relativePage, bestSizedAdaptedPagination);
+                itemList = filterOnlyInterestedData(innerPageSize, itemList, countFirstRelativePage, relativePage, bestSizedAdaptedPagination);
 
-                tryToAddRemainingDataFromNextSources(itemList, i, pageSize);
+                tryToAddRemainingDataFromNextSources(itemList, i, innerPageSize);
 
                 break;
             } else {
                 countToIgnore += orderedCountList.get(i);
-                relativePage = page - (countToIgnore / pageSize);
+                relativePage = innerPage - (countToIgnore / innerPageSize);
             }
         }
 
@@ -69,6 +78,11 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
     public Long getCount() {
         extractCountDataFromSources();
         return totalCount;
+    }
+
+    @Override
+    public Long getPageAmount(int pageSize) {
+        return Math.min(1, (long) Math.ceil((double) getCount() / pageSize));
     }
 
     @Override
@@ -84,15 +98,24 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
     }
 
     private List<T> filterOnlyInterestedData(int pageSize, List<T> itemList, int countFirstRelativePage, int relativePage, Pagination bestSizedAdaptedPagination) {
+        if (itemList.isEmpty()) return new ArrayList<>();
+
         return itemList.subList(
                 (countFirstRelativePage + (relativePage - 2) * pageSize) % bestSizedAdaptedPagination.getPageSize(),
                 Math.min(countFirstRelativePage + pageSize, itemList.size())
         );
     }
 
-    private void tryToSortAndMergePaginationSource(int page, int pageSize) throws TooMuchDataOnPageException {
-        int countStartToExtract = (page - 1) * pageSize;
-        int countFinalToExtract = (int) Math.min((long) page * pageSize - 1, totalCount);
+    /**
+     *
+     *  Check if need to merge-and-sort sources or not, depending
+     *  on the page and pageSize requested.
+     *
+     * **/
+
+    private void tryToSortAndMergePaginationSource(int innerPage, int innerPageSize) throws TooMuchDataOnPageException {
+        int countStartToExtract = (innerPage - 1) * innerPageSize;
+        int countFinalToExtract = (int) Math.min((long) innerPage * innerPageSize - 1, totalCount);
 
         int firstSourceIndexNeeded = 0;
         int lastSourceIndexNeeded = 0;
@@ -153,6 +176,22 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         sourcesAlreadySortedAndMerged = true;
     }
 
+    /**
+     *
+     *  If we have for example 3 sources with 5, 3 and 7 items in each one,
+     *  respectively, we should have, logically, a big one table like this:
+     *
+     *                          AAAAA/BBBCC/CCCCC
+     *
+     *  If this method indexes (minimum, maximum) as (1, 2), this method will
+     *  merge the second and third sources, resulting a big one table like this:
+     *
+     *                          AAAAA/BBBBB/BBBBB
+     *
+     *  If necessary, the method sort all those 10 items too.
+     *
+     * **/
+
     private PaginationSource<T> mergeSources(SortConfigIndexes indexes, Comparator<T> sorter) throws TooMuchDataOnPageException {
         StringBuilder newName = new StringBuilder("sorted[");
         List<T> mergedItemList = new ArrayList<>();
@@ -188,6 +227,33 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
         };
     }
 
+    /**
+     *
+     *  Imagine we have 3 sources with 5, 3 and 17 items in each one,
+     *  respectively. Suppose too page is 4 and pageSize is 5, requested
+     *  by client (who called getItemsList method). Logically, we wil
+     *  have a big one table like this:
+     *
+     *                              (to client)
+     *                                  v
+     *              AAAAA|BBBCC|CCCCC|CCCCC|CCCCC
+     *
+     *  where A's represents items from first source, B's from second,
+     *  and C's from third source. As requested by client, it needs to
+     *  receive a list containing CCCCC from the third source.
+     *
+     *  The main problem is: Since we know interested data is in the third
+     *  source and this source (and all others) returns data based on
+     *  pagination, which page and pageSize we should request to third
+     *  source to extract AT LEAST the interest data and, if need to
+     *  extract non-interested data, extract MINIMUM AS POSSIBLE
+     *  non-interested data? This method calculates the minimum pageSize
+     *  need to achive it.
+     *
+     *  In this case, relativePage is 3 and countFirstPage is 2.
+     *
+     * **/
+
     private Pagination getBestSizeAdaptedPagination(Pagination relativePagination, int countFirstPage) {
         Pagination bestPagination = Pagination.builder()
                 .page(relativePagination.getPage())
@@ -205,7 +271,7 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
                     .build();
         }
 
-        for (int newCandidatePageSize = relativePagination.getPageSize(); newCandidatePageSize < countBeforeInterestData; newCandidatePageSize++) {
+        for (int newCandidatePageSize = relativePagination.getPageSize(); newCandidatePageSize <= countBeforeInterestData; newCandidatePageSize++) {
             if (newCandidatePageSize - countBeforeInterestData % newCandidatePageSize >= relativePagination.getPageSize()) {
                 bestPagination.setPageSize(newCandidatePageSize);
                 bestPagination.setPage((int) Math.floor((1.0 * countBeforeInterestData) / newCandidatePageSize) + 1);
@@ -215,6 +281,14 @@ public class MultiPaginationSource<T> implements PaginationSource<T> {
 
         return bestPagination;
     }
+
+    /**
+     *
+     *  If pageSize is 10, for example, and we have 3 items in itemList,
+     *  this method try to add 7 more items from next sources that was
+     *  not accessed yet.
+     *
+     * **/
 
     private void tryToAddRemainingDataFromNextSources(List<T> itemList, int lastSourceIndex, int pageSize) throws TooMuchDataOnPageException {
         for (int j = lastSourceIndex + 1; j < orderedPaginationSourceList.size(); j++) {
